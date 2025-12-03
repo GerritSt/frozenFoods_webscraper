@@ -22,15 +22,14 @@ RETAILER_CONFIGS = {
     'Checkers': {
         'category_url': 'https://www.checkers.co.za/department/frozen-foods-1-67075db0ff9878113640072b',
         'selectors': {
-            'product_card': 'product-card_card__DsB3_.product-card_card-merch__gWn4Y',
-            'product_link': 'a.product-link',
-            'next_button': '.next-page, button[aria-label="Next"]',
-            'product_name': ['h1.product-name', 'h1'],
-            'brand': ['.brand', '[itemprop="brand"]'],
-            'price': ['.price', '[itemprop="price"]'],
-            'description': ['.description'],
-            'size': ['.product-size', '.weight'],
-            'barcode': ['.barcode', '.sku'],
+            'product_card': 'div.product-card_card__DsB3_.product-card_card-merch__gWn4Y',
+            'product_link': 'div.product-card_card__DsB3_.product-card_card-merch__gWn4Y a',
+            'next_button': 'a.next.ng-star-inserted',  # For subsection pagination
+            'section_header': 'h2.section-header_heading__9mOCx',
+            'view_all_link': 'a[href*="frozen"]',  # Links containing 'frozen' in subsection headers
+            'product_name': 'div.product-page_product-heading-wrapper__jqXdf h1',
+            'price': 'p.price-display_price-text__r_Pay.price-display_pdp-main-price__NtmTp',
+            'description': 'p.product-info_short-description__2_7wa',
         }
     },
     

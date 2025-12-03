@@ -156,7 +156,7 @@ class DataCollector:
         
         for retailer_name, config in RETAILER_CONFIGS.items():
             # Only shoprite and PicknPay for testing
-            if not retailer_name in ['PicknPay']:
+            if not retailer_name in ['Checkers']:
                 continue
             success = self.collect_from_retailer(retailer_name, config)
             results[retailer_name] = success

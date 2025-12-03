@@ -186,11 +186,96 @@ class UniversalScraper:
             self.logger.error(f"Error navigating to next page: {e}")
             return False
     
+    def handle_checkers_subsections(self, max_pages: Optional[int] = None) -> List[str]:
+        """Handle Checkers subsection navigation and collect all subsection page URLs."""
+        all_page_urls = []
+        
+        try:
+            # Find all section headers with "View All" links
+            self.logger.info("Looking for Checkers subsections...")
+            
+            # Get all h2 section headers
+            section_headers = self.page.query_selector_all('h2.section-header_heading__9mOCx')
+            self.logger.info(f"Found {len(section_headers)} section headers")
+            
+            # For each section, find the "View All" link
+            subsection_urls = []
+            for header in section_headers:
+                try:
+                    # Get the parent container and look for a link with "View All" text
+                    parent = header.evaluate('el => el.closest("section") || el.parentElement')
+                    # Look for anchor tags near the header
+                    links = self.page.query_selector_all('a[href*="/department/frozen-foods/"]')
+                    
+                    for link in links:
+                        href = link.get_attribute('href')
+                        link_text = link.text_content() or ''
+                        
+                        # Check if this is a "View All" link
+                        if 'view all' in link_text.lower() and href and href not in subsection_urls:
+                            # Convert relative URL to absolute if needed
+                            if not href.startswith('http'):
+                                href = urljoin(self.page.url, href)
+                            subsection_urls.append(href)
+                            self.logger.info(f"Found subsection: {link_text.strip()} -> {href}")
+                            break
+                except Exception as e:
+                    self.logger.debug(f"Error processing section header: {e}")
+                    continue
+            
+            self.logger.info(f"Found {len(subsection_urls)} subsections to scrape")
+            
+            # If no subsections found, just return current page
+            if not subsection_urls:
+                self.logger.warning("No subsections found, using main page")
+                return [self.page.url]
+            
+            # Navigate to each subsection and collect paginated URLs
+            for subsection_url in subsection_urls:
+                self.logger.info(f"Processing subsection: {subsection_url}")
+                
+                if not self.safe_navigate(subsection_url):
+                    self.logger.warning(f"Failed to navigate to subsection: {subsection_url}")
+                    continue
+                
+                # Collect pages within this subsection
+                current_page = 1
+                while True:
+                    if max_pages and current_page > max_pages:
+                        break
+                    
+                    current_url = self.page.url
+                    all_page_urls.append(current_url)
+                    self.logger.info(f"Collected subsection page {current_page}: {current_url}")
+                    
+                    if not self.has_next_page():
+                        break
+                    
+                    if not self.go_to_next_page():
+                        break
+                    
+                    current_page += 1
+                    self.wait_random()
+            
+            self.logger.info(f"Total pages collected from all subsections: {len(all_page_urls)}")
+            
+        except Exception as e:
+            self.logger.error(f"Error handling Checkers subsections: {e}")
+            # Fallback to main page if something goes wrong
+            if not all_page_urls:
+                all_page_urls = [self.page.url]
+        
+        return all_page_urls
+    
     def handle_pagination(self, max_pages: Optional[int] = None) -> List[str]:
         """Handle pagination and collect page URLs."""
         page_urls = []
-        current_page = 1
         
+        # Special handling for Checkers: navigate subsections
+        if self.retailer_name == 'Checkers':
+            return self.handle_checkers_subsections(max_pages)
+        
+        current_page = 1
         while True:
             if max_pages and current_page > max_pages:
                 break
@@ -409,6 +494,62 @@ class UniversalScraper:
                     if gross_weight_str:
                         product['gross_weight'] = gross_weight_str
             
+            # The product information for Checkers is in a table
+            elif self.retailer_name == 'Checkers':
+                table_data = {}
+                try:
+                    table_selector = 'table.product-specifications_table__gM398'
+                    # Find the table
+                    table = soup.select_one(table_selector)
+                    if not table:
+                        self.logger.warning(f"Table not found with selector: {table_selector}")
+                    else:
+                        # Extract all rows
+                        rows = table.find_all('tr')
+                        
+                        for row in rows:
+                            cells = row.find_all(['td', 'th'])
+                            
+                            # Each row should have 2 cells: label and value
+                            if len(cells) >= 2:
+                                label = cells[0].get_text(strip=True)
+                                value = cells[1].get_text(strip=True)
+                                
+                                # Store with cleaned label as key
+                                table_data[label] = value
+                        
+                        self.logger.info(f"Extracted {len(table_data)} fields from Checkers table")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error extracting Checkers table data: {e}")
+
+                # Extract data from the table
+                if table_data:
+                    # Extract brand from "Sub Brand" field
+                    product['brand'] = table_data.get('Sub Brand', None)
+                    
+                    # Extract other fields if available
+                    product['barcode'] = table_data.get('Barcode', product['barcode'])
+                
+                # Extract weight and unit from product name (e.g., "800g" in title)
+                if product['product_name']:
+                    size_match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
+                    if size_match:
+                        size_value = size_match.group(1)
+                        size_unit = size_match.group(2).lower()
+                        
+                        product['size_weight_volume'] = f"{size_value}{size_unit}"
+                        product['net_weight'] = f"{size_value} {size_unit}"
+                        
+                        # Set unit of measure
+                        if size_unit in ['kg', 'g']:
+                            product['unit_of_measure'] = 'kg'
+                        elif size_unit in ['l', 'ml']:
+                            product['unit_of_measure'] = 'L'
+                    else:
+                        # Default to EA if no weight found
+                        product['unit_of_measure'] = 'EA'
+            
             # The product information for PicknPay is in h3 headings with content following
             elif self.retailer_name == 'PicknPay':
                 try:
@@ -496,23 +637,32 @@ class UniversalScraper:
                     self.logger.error(f"Error extracting PicknPay product details: {e}")
             
             else:
-                product['brand'] = self.extract_text(
-                    soup, self.config['selectors']['brand']
-                )
+                # product['brand'] = self.extract_text(
+                #     soup, self.config['selectors']['brand']
+                # )
                 
-                product['size_weight_volume'] = self.extract_text(
-                    soup, self.config['selectors']['size']
-                )
+                # product['size_weight_volume'] = self.extract_text(
+                #     soup, self.config['selectors']['size']
+                # )
                 
-                product['barcode'] = self.extract_text(
-                    soup, self.config['selectors']['barcode']
-                )
+                # product['barcode'] = self.extract_text(
+                #     soup, self.config['selectors']['barcode']
+                # )
+                pass
             
             product['price'] = self.extract_price(soup)
-            # Extract product ID from URL
-            id_match = re.search(r'/(\d{6,})', product_url)
-            if id_match:
-                product['product_id'] = id_match.group(1)
+            
+            # Extract product ID from URL (retailer-specific patterns)
+            if self.retailer_name == 'Checkers':
+                # Checkers format: .../product-name-10375535EA
+                id_match = re.search(r'-(\d{8})(?:EA|KG|L)?$', product_url)
+                if id_match:
+                    product['product_id'] = id_match.group(1)
+            else:
+                # Generic pattern for other retailers
+                id_match = re.search(r'/(\d{6,})', product_url)
+                if id_match:
+                    product['product_id'] = id_match.group(1)
 
             # Calculate the price per unit (price per kg or price per liter)
             if product['price']:
