@@ -1,0 +1,19 @@
+# Web Scraping Dependencies
+playwright==1.40.0
+selenium==4.16.0
+beautifulsoup4==4.12.2
+lxml==5.0.0
+
+# Data Processing
+pandas==2.1.4
+openpyxl==3.1.2
+
+# Utilities
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Logging and Configuration
+colorlog==6.8.0
+
+# Install Playwright browsers after installing requirements:
+# python -m playwright install
