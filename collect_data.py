@@ -200,8 +200,8 @@ def main():
     
     # Configuration
     HEADLESS = False  # Set to True for production
-    MAX_PAGES = 2     # Number of pages to scrape per retailer
-    MAX_ITEMS = 5  # Maximum items per retailer (None = no limit)
+    MAX_PAGES = None     # Number of pages to scrape per retailer
+    MAX_ITEMS = 10  # Maximum items per retailer (None = no limit)
     
     logger.info("=" * 80)
     logger.info("FROZEN FOODS DATA COLLECTION")

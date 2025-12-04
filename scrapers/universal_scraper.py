@@ -531,15 +531,23 @@ class UniversalScraper:
                     # Extract other fields if available
                     product['barcode'] = table_data.get('Barcode', product['barcode'])
                 
-                # Extract weight and unit from product name (e.g., "800g" in title)
+                # Extract weight and unit from product name (e.g., "800g" or "5 x 55ml" in title)
                 if product['product_name']:
-                    size_match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
-                    if size_match:
-                        size_value = size_match.group(1)
-                        size_unit = size_match.group(2).lower()
+                    # First try to match pattern like "5 x 55ml" (quantity x unit_size)
+                    multi_pack_match = re.search(r'(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
+                    
+                    if multi_pack_match:
+                        # Calculate total volume/weight: quantity * unit_size
+                        quantity = float(multi_pack_match.group(1))
+                        unit_size = float(multi_pack_match.group(2))
+                        size_unit = multi_pack_match.group(3).lower()
                         
-                        product['size_weight_volume'] = f"{size_value}{size_unit}"
-                        product['net_weight'] = f"{size_value} {size_unit}"
+                        total_size = quantity * unit_size
+                        
+                        product['size_weight_volume'] = f"{total_size}{size_unit}"
+                        product['net_weight'] = f"{total_size} {size_unit}"
+                        
+                        self.logger.debug(f"Multi-pack detected: {quantity} x {unit_size}{size_unit} = {total_size}{size_unit}")
                         
                         # Set unit of measure
                         if size_unit in ['kg', 'g']:
@@ -547,8 +555,23 @@ class UniversalScraper:
                         elif size_unit in ['l', 'ml']:
                             product['unit_of_measure'] = 'L'
                     else:
-                        # Default to EA if no weight found
-                        product['unit_of_measure'] = 'EA'
+                        # Try single measurement pattern (e.g., "800g")
+                        size_match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
+                        if size_match:
+                            size_value = size_match.group(1)
+                            size_unit = size_match.group(2).lower()
+                            
+                            product['size_weight_volume'] = f"{size_value}{size_unit}"
+                            product['net_weight'] = f"{size_value} {size_unit}"
+                            
+                            # Set unit of measure
+                            if size_unit in ['kg', 'g']:
+                                product['unit_of_measure'] = 'kg'
+                            elif size_unit in ['l', 'ml']:
+                                product['unit_of_measure'] = 'L'
+                        else:
+                            # Default to EA if no weight found
+                            product['unit_of_measure'] = 'EA'
             
             # The product information for PicknPay is in h3 headings with content following
             elif self.retailer_name == 'PicknPay':
@@ -618,20 +641,43 @@ class UniversalScraper:
                         if description_text and not product['description']:
                             product['description'] = description_text
                         
-                        # Try to extract size/weight from product name (e.g., "1kg" in title)
+                        # Try to extract size/weight from product name (e.g., "1kg" or "6 x 440ml" in title)
                         if product['product_name']:
-                            size_match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
-                            if size_match:
-                                product['size_weight_volume'] = f"{size_match.group(1)}{size_match.group(2)}"
-                                product['net_weight'] = f"{size_match.group(1)} {size_match.group(2)}"
+                            # First try to match pattern like "6 x 440ml" (quantity x unit_size)
+                            multi_pack_match = re.search(r'(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
+                            
+                            if multi_pack_match:
+                                # Calculate total volume/weight: quantity * unit_size
+                                quantity = float(multi_pack_match.group(1))
+                                unit_size = float(multi_pack_match.group(2))
+                                size_unit = multi_pack_match.group(3).lower()
+                                
+                                total_size = quantity * unit_size
+                                
+                                product['size_weight_volume'] = f"{total_size}{size_unit}"
+                                product['net_weight'] = f"{total_size} {size_unit}"
+                                
+                                self.logger.debug(f"Multi-pack detected: {quantity} x {unit_size}{size_unit} = {total_size}{size_unit}")
+                                
                                 # Get the unit of measure
-                                unit = size_match.group(2)
-                                if unit in ['kg', 'g']:
+                                if size_unit in ['kg', 'g']:
                                     product['unit_of_measure'] = 'kg'
-                                elif unit in ['L', 'ml']:
+                                elif size_unit in ['l', 'ml']:
                                     product['unit_of_measure'] = 'L'
-                            else: 
-                                product['unit_of_measure'] = 'EA'
+                            else:
+                                # Try single measurement pattern (e.g., "1kg")
+                                size_match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|l|ml)\b', product['product_name'], re.IGNORECASE)
+                                if size_match:
+                                    product['size_weight_volume'] = f"{size_match.group(1)}{size_match.group(2)}"
+                                    product['net_weight'] = f"{size_match.group(1)} {size_match.group(2)}"
+                                    # Get the unit of measure
+                                    unit = size_match.group(2)
+                                    if unit in ['kg', 'g']:
+                                        product['unit_of_measure'] = 'kg'
+                                    elif unit in ['L', 'ml']:
+                                        product['unit_of_measure'] = 'L'
+                                else: 
+                                    product['unit_of_measure'] = 'EA'
                 
                 except Exception as e:
                     self.logger.error(f"Error extracting PicknPay product details: {e}")

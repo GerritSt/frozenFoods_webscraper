@@ -43,19 +43,4 @@ RETAILER_CONFIGS = {
             'price': 'div.price',
         }
     },
-    
-    'Makro': {
-        'category_url': 'https://www.makro.co.za/food/frozen-food/c/F07',
-        'selectors': {
-            'product_card': '.product-item',
-            'product_link': 'a.product-link',
-            'next_button': '.next-page',
-            'product_name': ['h1', '.product-name'],
-            'brand': ['.brand'],
-            'price': ['.price'],
-            'description': ['.description'],
-            'size': ['.product-size'],
-            'barcode': ['.barcode'],
-        }
-    }
 }
