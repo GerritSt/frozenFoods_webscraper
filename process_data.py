@@ -1,13 +1,14 @@
 """
 Data Processing Script
 ----------------------
-Processes raw data files from data/raw/ and creates comparison tables.
+Processes raw data files from data/raw/ and creates a comparison table.
 
 This script:
 1. Loads raw Excel files from data/raw/
 2. Normalizes and cleans the data
-3. Creates comparison tables
-4. Saves processed data to data/processed/
+3. Matches similar products across retailers using fuzzy matching
+4. Creates a comparison table showing prices across retailers
+5. Saves to data/processed/price_comparison.xlsx
 """
 
 import logging
@@ -16,7 +17,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
-from typing import List, Dict
+from typing import List, Dict, Tuple
+from rapidfuzz import fuzz, process
 
 # Import utilities
 from utils.normalizer import DataNormalizer
@@ -40,25 +42,31 @@ logger = logging.getLogger("DataProcessor")
 
 class DataProcessor:
     """
-    Processes raw retailer data into comparison tables.
+    Processes raw retailer data into a price comparison table.
     """
     
-    def __init__(self):
-        """Initialize the data processor."""
+    def __init__(self, similarity_threshold: int = 80):
+        """
+        Initialize the data processor.
+        
+        Args:
+            similarity_threshold: Minimum similarity score (0-100) to consider products as matching
+        """
         self.normalizer = DataNormalizer()
+        self.similarity_threshold = similarity_threshold
         
         self.raw_dir = Path('data/raw')
         self.processed_dir = Path('data/processed')
         self.processed_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info("Data Processor initialized")
+        logger.info(f"Data Processor initialized (similarity threshold: {similarity_threshold}%)")
     
-    def load_raw_files(self) -> Dict[str, List[Dict]]:
+    def load_raw_files(self) -> pd.DataFrame:
         """
         Load all raw Excel files from data/raw/ directory.
         
         Returns:
-            Dictionary mapping retailer name to list of products
+            Combined DataFrame with all products from all retailers
         """
         logger.info("\n" + "=" * 80)
         logger.info("LOADING RAW DATA FILES")
@@ -66,152 +74,238 @@ class DataProcessor:
         
         if not self.raw_dir.exists():
             logger.error(f"Raw data directory does not exist: {self.raw_dir}")
-            return {}
+            return pd.DataFrame()
         
-        # Find all *_raw_*.xlsx files
-        raw_files = list(self.raw_dir.glob('*_raw_*.xlsx'))
+        # Find all *_raw*.xlsx files
+        raw_files = list(self.raw_dir.glob('*_raw*.xlsx'))
         
         if not raw_files:
             logger.warning(f"No raw data files found in {self.raw_dir}")
-            return {}
+            return pd.DataFrame()
         
         logger.info(f"Found {len(raw_files)} raw data file(s)")
         
-        data_by_retailer = {}
+        all_products = []
         
         for filepath in raw_files:
             try:
-                # Extract retailer name from filename (e.g., "shoprite_raw_20251130_123456.xlsx" -> "Shoprite")
-                retailer_name = filepath.stem.split('_raw_')[0].title()
+                # Extract retailer name
+                retailer_name = filepath.stem.split('_raw')[0].title()
                 
                 logger.info(f"Loading: {filepath.name} ({retailer_name})")
                 
                 # Read Excel file
                 df = pd.read_excel(filepath)
+                df['retailer'] = retailer_name
                 
-                # Convert DataFrame to list of dictionaries
-                products = df.to_dict('records')
+                all_products.append(df)
                 
-                data_by_retailer[retailer_name] = products
-                
-                logger.info(f"  ✓ Loaded {len(products)} products from {retailer_name}")
+                logger.info(f"  ✓ Loaded {len(df)} products from {retailer_name}")
                 
             except Exception as e:
                 logger.error(f"  ✗ Failed to load {filepath.name}: {e}")
                 continue
         
-        logger.info(f"\nTotal retailers loaded: {len(data_by_retailer)}")
+        if not all_products:
+            return pd.DataFrame()
         
-        return data_by_retailer
+        # Combine all DataFrames
+        combined_df = pd.concat(all_products, ignore_index=True)
+        logger.info(f"\nTotal products loaded: {len(combined_df)}")
+        
+        return combined_df
     
-    def normalize_data(self, data_by_retailer: Dict[str, List[Dict]]) -> Dict[str, List[Dict]]:
+    def normalize_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Normalize and clean all product data.
         
         Args:
-            data_by_retailer: Raw data by retailer
+            df: Raw product DataFrame
             
         Returns:
-            Normalized data by retailer
+            Normalized DataFrame
         """
         logger.info("\n" + "=" * 80)
         logger.info("NORMALIZING DATA")
         logger.info("=" * 80)
         
-        normalized = {}
+        normalized_products = []
         
-        for retailer, products in data_by_retailer.items():
-            logger.info(f"Normalizing {retailer}...")
-            
+        for _, product in df.iterrows():
             try:
-                normalized_products = [
-                    self.normalizer.normalize_product_data(product)
-                    for product in products
-                ]
-                
-                normalized[retailer] = normalized_products
-                logger.info(f"  ✓ Normalized {len(normalized_products)} products")
-                
+                normalized = self.normalizer.normalize_product(product.to_dict())
+                normalized_products.append(normalized)
             except Exception as e:
-                logger.error(f"  ✗ Failed to normalize {retailer}: {e}")
-                normalized[retailer] = products  # Use raw data as fallback
+                logger.warning(f"  ⚠ Failed to normalize product: {e}")
+                continue
         
-        return normalized
+        normalized_df = pd.DataFrame(normalized_products)
+        logger.info(f"  ✓ Normalized {len(normalized_df)} products")
+        
+        return normalized_df
     
-    def create_comparison_table(self, data_by_retailer: Dict[str, List[Dict]]):
+    def find_similar_products(self, df: pd.DataFrame) -> List[Dict]:
         """
-        Create comparison tables from normalized data.
+        Find similar products across retailers using fuzzy matching.
         
         Args:
-            data_by_retailer: Normalized data by retailer
+            df: Normalized product DataFrame
+            
+        Returns:
+            List of product groups (similar products from different retailers)
         """
         logger.info("\n" + "=" * 80)
-        logger.info("CREATING COMPARISON TABLES")
+        logger.info("MATCHING SIMILAR PRODUCTS")
         logger.info("=" * 80)
         
-        # Combine all data
-        combined_data = []
-        for retailer, products in data_by_retailer.items():
-            combined_data.extend(products)
+        # Group products by retailer
+        retailers = df['retailer'].unique()
+        logger.info(f"Retailers: {', '.join(retailers)}")
         
-        if not combined_data:
+        # Use first retailer as base
+        base_retailer = retailers[0]
+        base_products = df[df['retailer'] == base_retailer].copy()
+        
+        logger.info(f"Using {base_retailer} as base ({len(base_products)} products)")
+        
+        matched_groups = []
+        matched_base_indices = set()
+        
+        # For each base product, find matches in other retailers
+        for idx, base_product in base_products.iterrows():
+            if idx in matched_base_indices:
+                continue
+            
+            base_name = base_product['product_name']
+            if not base_name:
+                continue
+            
+            # Normalize name for matching
+            base_normalized = self.normalizer.normalize_product_name(base_name)
+            
+            # Create product group starting with base
+            group = {
+                'product_name': base_name,
+                'brand': base_product.get('brand'),
+                'size': base_product.get('size_weight_volume'),
+            }
+            
+            # Add base retailer data
+            group[f'{base_retailer}_price'] = base_product.get('price')
+            group[f'{base_retailer}_price_per_unit'] = base_product.get('price_per_unit')
+            group[f'{base_retailer}_url'] = base_product.get('product_url')
+            
+            # Try to find matches in other retailers
+            for other_retailer in retailers:
+                if other_retailer == base_retailer:
+                    continue
+                
+                other_products = df[df['retailer'] == other_retailer]
+                
+                if len(other_products) == 0:
+                    continue
+                
+                # Get product names for matching
+                other_names = other_products['product_name'].tolist()
+                other_normalized = [self.normalizer.normalize_product_name(str(name)) for name in other_names]
+                
+                # Find best match using fuzzy matching
+                best_match = process.extractOne(
+                    base_normalized,
+                    other_normalized,
+                    scorer=fuzz.token_sort_ratio
+                )
+                
+                if best_match and best_match[1] >= self.similarity_threshold:
+                    match_idx = best_match[2]
+                    matched_product = other_products.iloc[match_idx]
+                    
+                    # Add matched product data
+                    group[f'{other_retailer}_price'] = matched_product.get('price')
+                    group[f'{other_retailer}_price_per_unit'] = matched_product.get('price_per_unit')
+                    group[f'{other_retailer}_url'] = matched_product.get('product_url')
+                    
+                    logger.debug(f"Matched: {base_name} <-> {matched_product['product_name']} ({best_match[1]}%)")
+            
+            # Only add group if at least 2 retailers have this product
+            retailer_count = sum(1 for key in group.keys() if key.endswith('_price') and group[key] is not None)
+            
+            if retailer_count >= 2:
+                matched_groups.append(group)
+                matched_base_indices.add(idx)
+        
+        logger.info(f"Found {len(matched_groups)} product groups with matches across retailers")
+        
+        return matched_groups
+    
+    def create_comparison_table(self, df: pd.DataFrame):
+        """
+        Create price comparison table from normalized data.
+        
+        Args:
+            df: Normalized product DataFrame
+        """
+        logger.info("\n" + "=" * 80)
+        logger.info("CREATING COMPARISON TABLE")
+        logger.info("=" * 80)
+        
+        if df.empty:
             logger.warning("No data to process!")
             return
         
-        logger.info(f"Total products: {len(combined_data)}")
+        # Find similar products
+        matched_groups = self.find_similar_products(df)
         
-        # Generate timestamp for filenames
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        if not matched_groups:
+            logger.warning("No matching products found across retailers!")
+            return
         
-        # Export combined comparison table (CSV)
-        csv_path = self.processed_dir / f"comparison_table_{timestamp}.csv"
-        df_combined = pd.DataFrame(combined_data)
-        df_combined.to_csv(csv_path, index=False, encoding='utf-8')
-        logger.info(f"✓ CSV comparison table: {csv_path}")
+        # Create comparison DataFrame
+        comparison_df = pd.DataFrame(matched_groups)
         
-        # Export combined comparison table (Excel)
-        excel_path = self.processed_dir / f"comparison_table_{timestamp}.xlsx"
-        df_combined.to_excel(excel_path, index=False, engine='openpyxl')
-        logger.info(f"✓ Excel comparison table: {excel_path}")
+        # Sort by product name
+        comparison_df = comparison_df.sort_values('product_name')
         
-        # Export multi-sheet Excel (one sheet per retailer)
-        multi_excel_path = self.processed_dir / f"comparison_by_retailer_{timestamp}.xlsx"
-        with pd.ExcelWriter(multi_excel_path, engine='openpyxl') as writer:
-            for retailer, products in data_by_retailer.items():
-                if products:
-                    df = pd.DataFrame(products)
-                    df.to_excel(writer, sheet_name=retailer, index=False)
-        logger.info(f"✓ Multi-sheet comparison: {multi_excel_path}")
+        # Export to Excel
+        output_path = self.processed_dir / 'price_comparison.xlsx'
+        comparison_df.to_excel(output_path, index=False, engine='openpyxl')
+        
+        logger.info(f"✓ Comparison table saved: {output_path}")
+        logger.info(f"  Total product matches: {len(comparison_df)}")
         
         # Print statistics
-        self._print_statistics(data_by_retailer, combined_data)
+        self._print_statistics(comparison_df)
     
-    def _print_statistics(self, data_by_retailer: Dict[str, List[Dict]], 
-                         combined_data: List[Dict]):
+    def _print_statistics(self, comparison_df: pd.DataFrame):
         """Print summary statistics."""
         logger.info("\n" + "=" * 80)
         logger.info("COMPARISON TABLE STATISTICS")
         logger.info("=" * 80)
         
-        # Per-retailer counts
-        logger.info("\nProducts by Retailer:")
-        for retailer, products in data_by_retailer.items():
-            logger.info(f"  • {retailer}: {len(products)} products")
+        logger.info(f"\nTotal Product Matches: {len(comparison_df)}")
         
-        # Get detailed statistics
-        df = pd.DataFrame(combined_data)
+        # Count products per retailer
+        retailers = []
+        for col in comparison_df.columns:
+            if col.endswith('_price'):
+                retailer = col.replace('_price', '')
+                retailers.append(retailer)
+                count = comparison_df[col].notna().sum()
+                logger.info(f"  • {retailer}: {count} products")
         
-        logger.info(f"\nTotal Products: {len(df)}")
-        logger.info(f"Unique Brands: {df['brand'].nunique() if 'brand' in df else 0}")
+        # Price statistics per retailer
+        logger.info("\nPrice Statistics by Retailer:")
+        for retailer in retailers:
+            price_col = f'{retailer}_price'
+            if price_col in comparison_df.columns:
+                prices = pd.to_numeric(comparison_df[price_col], errors='coerce').dropna()
+                if len(prices) > 0:
+                    logger.info(f"  {retailer}:")
+                    logger.info(f"    • Average: R{prices.mean():.2f}")
+                    logger.info(f"    • Min: R{prices.min():.2f}")
+                    logger.info(f"    • Max: R{prices.max():.2f}")
         
-        if 'price' in df and df['price'].notna().any():
-            logger.info(f"\nPrice Statistics:")
-            logger.info(f"  • Average: R{df['price'].mean():.2f}")
-            logger.info(f"  • Minimum: R{df['price'].min():.2f}")
-            logger.info(f"  • Maximum: R{df['price'].max():.2f}")
-        
-        logger.info(f"\nProducts with Barcode: {df['barcode'].notna().sum() if 'barcode' in df else 0}")
-        logger.info(f"Process Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"\nProcess Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     def process_all(self):
         """Main processing workflow."""
@@ -221,21 +315,26 @@ class DataProcessor:
         logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Load raw files
-        data_by_retailer = self.load_raw_files()
+        df = self.load_raw_files()
         
-        if not data_by_retailer:
+        if df.empty:
             logger.error("No data loaded. Exiting.")
             return False
         
         # Normalize data
-        normalized_data = self.normalize_data(data_by_retailer)
+        normalized_df = self.normalize_data(df)
         
-        # Create comparison tables
-        self.create_comparison_table(normalized_data)
+        if normalized_df.empty:
+            logger.error("No data after normalization. Exiting.")
+            return False
+        
+        # Create comparison table
+        self.create_comparison_table(normalized_df)
         
         logger.info("\n" + "=" * 80)
         logger.info("DATA PROCESSING COMPLETE!")
         logger.info("=" * 80)
+        logger.info("Output: data/processed/price_comparison.xlsx")
         
         return True
 

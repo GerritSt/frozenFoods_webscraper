@@ -1,12 +1,11 @@
 """
 Data Normalizer
 ---------------
-Cleans and standardizes scraped product data.
-Handles text cleaning, size/weight parsing, and unit conversion.
+Cleans and standardizes scraped product data for comparison.
 """
 
 import re
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict
 
 
 class DataNormalizer:
@@ -16,46 +15,30 @@ class DataNormalizer:
     
     @staticmethod
     def clean_text(text: Optional[str]) -> Optional[str]:
-        """
-        Clean and normalize text fields.
-        
-        Args:
-            text: Raw text string
-            
-        Returns:
-            Cleaned text or None
-        """
-        if not text:
+        """Clean and normalize text fields."""
+        if not text or str(text).lower() in ['none', 'nan', '']:
             return None
         
+        text = str(text).strip()
         # Remove extra whitespace
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Remove special characters but keep basic punctuation
-        text = re.sub(r'[^\w\s.,\-–—()&/]', '', text)
-        
-        # Normalize dashes
-        text = text.replace('–', '-').replace('—', '-')
+        text = re.sub(r'\s+', ' ', text)
         
         return text if text else None
     
     @staticmethod
-    def clean_price(price: Optional[str]) -> Optional[float]:
-        """
-        Extract and clean price value.
-        
-        Args:
-            price: Raw price string (e.g., "R 45.99", "$12.50")
-            
-        Returns:
-            Float price value or None
-        """
-        if not price:
+    def clean_price(price) -> Optional[float]:
+        """Extract and clean price value."""
+        if not price or str(price).lower() in ['none', 'nan', '']:
             return None
         
-        # Remove currency symbols and extract number
-        price_match = re.search(r'(\d+[.,]\d{2})', str(price))
+        # If already a number
+        try:
+            return float(price)
+        except (ValueError, TypeError):
+            pass
         
+        # Extract from string
+        price_match = re.search(r'(\d+[.,]\d{2})', str(price))
         if price_match:
             price_str = price_match.group(1).replace(',', '.')
             try:
@@ -66,126 +49,69 @@ class DataNormalizer:
         return None
     
     @staticmethod
-    def parse_size_weight_volume(text: Optional[str]) -> Dict[str, Optional[str]]:
+    def normalize_product_name(name: str) -> str:
         """
-        Parse size, weight, or volume information from text.
-        
-        Args:
-            text: Text containing size info (e.g., "500g", "1.5L", "250ml")
-            
-        Returns:
-            Dictionary with 'value', 'unit', and 'type' keys
+        Normalize product name for comparison.
+        Remove brand names, sizes, and common descriptors to help matching.
         """
-        result = {
-            'value': None,
-            'unit': None,
-            'type': None  # 'weight', 'volume', or 'count'
-        }
+        if not name:
+            return ""
         
-        if not text:
-            return result
+        name = str(name).lower().strip()
         
-        text = text.lower().strip()
+        # Remove common package indicators
+        name = re.sub(r'\d+\s*x\s*\d+\s*(ml|g|kg|l)', '', name)
+        name = re.sub(r'\d+(?:\.\d+)?\s*(ml|g|kg|l|mm)', '', name)
         
-        # Pattern for number + unit
-        pattern = r'(\d+(?:[.,]\d+)?)\s*([a-z]+)'
-        match = re.search(pattern, text)
+        # Remove extra whitespace
+        name = re.sub(r'\s+', ' ', name).strip()
         
-        if match:
-            value = match.group(1).replace(',', '.')
-            unit = match.group(2)
-            
-            result['value'] = value
-            result['unit'] = unit
-            
-            # Determine type
-            if unit in DataNormalizer.WEIGHT_UNITS or unit in ['kg', 'g', 'mg']:
-                result['type'] = 'weight'
-            elif unit in DataNormalizer.VOLUME_UNITS or unit in ['l', 'ml']:
-                result['type'] = 'volume'
-            else:
-                result['type'] = 'unknown'
-        
-        return result
+        return name
     
     @staticmethod
-    def normalize_brand(brand: Optional[str]) -> Optional[str]:
+    def parse_weight_volume(text: Optional[str]) -> Optional[float]:
         """
-        Normalize brand names (capitalize properly, remove extra text).
-        
-        Args:
-            brand: Raw brand name
-            
-        Returns:
-            Normalized brand name
+        Parse weight/volume and normalize to base units (g or ml).
+        Returns value in grams or milliliters.
         """
-        if not brand:
+        if not text or str(text).lower() in ['none', 'nan', '']:
             return None
         
-        brand = DataNormalizer.clean_text(brand)
+        text = str(text).lower().strip()
         
-        # Capitalize first letter of each word
-        brand = ' '.join(word.capitalize() for word in brand.split())
-        
-        return brand
-    
-    @staticmethod
-    def validate_barcode(barcode: Optional[str]) -> Optional[str]:
-        """
-        Validate and clean barcode (should be numeric).
-        
-        Args:
-            barcode: Raw barcode string
-            
-        Returns:
-            Cleaned barcode or None
-        """
-        if not barcode:
+        # Try to extract number and unit
+        match = re.search(r'(\d+(?:\.\d+)?)\s*(kg|g|l|ml)', text)
+        if not match:
             return None
         
-        # Extract only digits
-        barcode = re.sub(r'\D', '', str(barcode))
+        value = float(match.group(1))
+        unit = match.group(2)
         
-        # Barcodes are typically 8, 12, 13, or 14 digits
-        if len(barcode) in [8, 12, 13, 14]:
-            return barcode
+        # Normalize to base units
+        if unit == 'kg':
+            return value * 1000  # Convert to grams
+        elif unit == 'g':
+            return value
+        elif unit == 'l':
+            return value * 1000  # Convert to milliliters
+        elif unit == 'ml':
+            return value
         
         return None
     
     @staticmethod
-    def normalize_product_data(product: Dict) -> Dict:
+    def normalize_product(product: Dict) -> Dict:
         """
-        Apply all normalization functions to a product dictionary.
-        
-        Args:
-            product: Raw product data dictionary
-            
-        Returns:
-            Normalized product data dictionary
+        Normalize a single product for comparison.
         """
-        normalized = product.copy()
-        
-        # Clean text fields
-        text_fields = ['product_name', 'description', 'brand', 'category', 'department']
-        for field in text_fields:
-            if field in normalized:
-                normalized[field] = DataNormalizer.clean_text(normalized[field])
-        
-        # Clean price
-        if 'price' in normalized:
-            normalized['price'] = DataNormalizer.clean_price(normalized['price'])
-        
-        # Normalize brand
-        if 'brand' in normalized:
-            normalized['brand'] = DataNormalizer.normalize_brand(normalized['brand'])
-        
-        # Validate barcode
-        if 'barcode' in normalized:
-            normalized['barcode'] = DataNormalizer.validate_barcode(normalized['barcode'])
-        
-        # Parse size/weight/volume
-        if 'size_weight_volume' in normalized and normalized['size_weight_volume']:
-            parsed = DataNormalizer.parse_size_weight_volume(normalized['size_weight_volume'])
-            normalized['unit_of_measure'] = parsed['unit']
-        
-        return normalized
+        return {
+            'product_name': DataNormalizer.clean_text(product.get('product_name')),
+            'brand': DataNormalizer.clean_text(product.get('brand')),
+            'price': DataNormalizer.clean_price(product.get('price')),
+            'price_per_unit': DataNormalizer.clean_price(product.get('price_per_unit')),
+            'size_weight_volume': DataNormalizer.clean_text(product.get('size_weight_volume')),
+            'normalized_size': DataNormalizer.parse_weight_volume(product.get('size_weight_volume')),
+            'unit_of_measure': DataNormalizer.clean_text(product.get('unit_of_measure')),
+            'retailer': DataNormalizer.clean_text(product.get('retailer')),
+            'product_url': DataNormalizer.clean_text(product.get('product_url')),
+        }

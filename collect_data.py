@@ -156,8 +156,8 @@ class DataCollector:
         
         for retailer_name, config in RETAILER_CONFIGS.items():
             # Only shoprite and PicknPay for testing
-            if not retailer_name in ['Checkers']:
-                continue
+            # if not retailer_name in ['Checkers']:
+            #     continue
             success = self.collect_from_retailer(retailer_name, config)
             results[retailer_name] = success
         
@@ -201,7 +201,7 @@ def main():
     # Configuration
     HEADLESS = False  # Set to True for production
     MAX_PAGES = None     # Number of pages to scrape per retailer
-    MAX_ITEMS = 10  # Maximum items per retailer (None = no limit)
+    MAX_ITEMS = 50  # Maximum items per retailer (None = no limit)
     
     logger.info("=" * 80)
     logger.info("FROZEN FOODS DATA COLLECTION")

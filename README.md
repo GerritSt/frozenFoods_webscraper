@@ -88,31 +88,42 @@ frozenFoods_webscraper/
 │                   ▼                                        │
 │  ┌────────────────────────────────────────────────────┐    │
 │  │ Apply normalization (utils/normalizer.py):         │    │
-│  │  - Standardize price formats (R123.45)             │    │
-│  │  - Normalize units (KG, EA, L, G, ML)              │    │
-│  │  - Parse size/weight from product names            │    │
-│  │  - Clean brand names                               │    │
-│  │  - Standardize category names                      │    │
-│  │  - Remove duplicates                               │    │
+│  │  - Clean product names and brands                  │    │
+│  │  - Parse and standardize prices                    │    │
+│  │  - Extract and normalize weights/volumes           │    │
+│  │  - Convert to base units (g or ml)                 │    │
 │  └────────────────┬───────────────────────────────────┘    │
 │                   │                                        │
 │                   ▼                                        │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ Combine all retailer data into single DataFrame    │    │
+│  │ Match similar products using RapidFuzz:            │    │
+│  │  - Normalize product names for comparison          │    │
+│  │  - Use fuzzy matching (token_sort_ratio)           │    │
+│  │  - Apply similarity threshold (80%)                │    │
+│  │  - Group products from different retailers         │    │
 │  └────────────────┬───────────────────────────────────┘    │
 │                   │                                        │
 │                   ▼                                        │
 │  ┌────────────────────────────────────────────────────┐    │
-│  │ Export processed data:                             │    │
-│  │  - data/processed/frozen_foods_combined.csv        │    │
-│  │  - data/processed/frozen_foods_combined.xlsx       │    │
+│  │ Create comparison table with columns:              │    │
+│  │  - Product name, brand, size                       │    │
+│  │  - {Retailer}_price                                │    │
+│  │  - {Retailer}_price_per_unit                       │    │
+│  │  - {Retailer}_url                                  │    │
+│  │  (One set of columns per retailer)                 │    │
+│  └────────────────┬───────────────────────────────────┘    │
+│                   │                                        │
+│                   ▼                                        │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │ Export to Excel:                                   │    │
+│  │  data/processed/price_comparison.xlsx              │    │
 │  └────────────────────────────────────────────────────┘    │
 └───────────────────────────┬────────────────────────────────┘
                             │
                             ▼
-                 ┌──────────────────┐
-                 │   END: Complete  │
-                 └──────────────────┘
+                     ┌──────────────┐
+                     │     DONE     │
+                     └──────────────┘
 ```
 
 ## Data Fields Collected
@@ -203,18 +214,31 @@ The scraper generates files in the `data/` directory:
 
 **Raw Data:**
 
-- `data/raw/Shoprite_raw.xlsx`
-- `data/raw/Checkers_raw.xlsx`
-- `data/raw/PicknPay_raw.xlsx`
+- `data/raw/shoprite_raw.xlsx`
+- `data/raw/checkers_raw.xlsx`
+- `data/raw/picknpay_raw.xlsx`
 
 **Processed Data:**
 
-- `data/processed/frozen_foods_combined.csv`
-- `data/processed/frozen_foods_combined.xlsx`
+- `data/processed/price_comparison.xlsx` - Comparison table showing matched products across retailers
 
 **Logs:**
 
-- `logs/scraper_YYYYMMDD_HHMMSS.log`
+- `logs/scraper_YYYYMMDD_HHMMSS.log` - Collection logs
+- `logs/processor_log_YYYYMMDD_HHMMSS.log` - Processing logs
+
+## Output File Structure
+
+The `price_comparison.xlsx` file contains the following columns:
+
+- `product_name` - Product name
+- `brand` - Product brand
+- `size` - Product size/weight/volume
+- `{Retailer}_price` - Price at each retailer (e.g., Shoprite_price, Checkers_price)
+- `{Retailer}_price_per_unit` - Price per unit at each retailer
+- `{Retailer}_url` - Product page URL at each retailer
+
+Only products found at 2 or more retailers are included in the comparison table.
 
 ## Requirements
 
@@ -224,4 +248,4 @@ See `requirements.txt` for full dependency list. Key requirements:
 - beautifulsoup4>=4.12.0
 - pandas>=2.0.0
 - openpyxl>=3.1.0
-- lxml>=4.9.0
+- rapidfuzz>=3.0.0
