@@ -152,26 +152,13 @@ frozenFoods_webscraper/
 
 1. Clone or download the project
 
-2. Navigate to project directory:
-
-   ```cmd
-   cd "c:\Users\gerri\Documents\besigheid\Work experience\Automation Arcitects\frozenFoods_webscraper"
-   ```
-
-3. Create virtual environment (recommended):
-
-   ```cmd
-   python -m venv venv
-   venv\Scripts\activate
-   ```
-
-4. Install dependencies:
+2. Install dependencies:
 
    ```cmd
    pip install -r requirements.txt
    ```
 
-5. Install Playwright browsers:
+3. Install Playwright browsers:
    ```cmd
    python -m playwright install
    ```
